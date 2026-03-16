@@ -17,6 +17,7 @@ package postgresql
 import (
 	"bufio"
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
@@ -77,6 +78,7 @@ type Manager struct {
 	suAuthMethod       string
 	suUsername         string
 	suPassword         string
+	suConn             *sql.DB
 	replAuthMethod     string
 	replUsername       string
 	replPassword       string
@@ -291,6 +293,33 @@ func (p *Manager) Start() error {
 		return err
 	}
 	return p.start()
+}
+
+func (p *Manager) keepAlive() {
+	ticker := time.NewTicker(p.requestTimeout * 5)
+	for _ = range ticker.C {
+		if err := p.suConn.PingContext(context.Background()); err != nil {
+			log.Errorf("Keep alive failed: %f", err)
+		}
+	}
+}
+
+func (p *Manager) getConn() (*sql.DB, error) {
+	if p.suConn != nil {
+		return p.suConn, nil
+	}
+
+	var err error
+	p.suConn, err = sql.Open("postgres", p.localConnParams.ConnString())
+	if err != nil {
+		return nil, err
+	}
+	p.suConn.SetConnMaxLifetime(0)
+	p.suConn.SetMaxOpenConns(50)
+
+	go p.keepAlive()
+
+	return p.suConn, nil
 }
 
 // start starts the instance. A success means that the instance has been
@@ -553,14 +582,19 @@ func (p *Manager) SetupRoles() error {
 	ctx, cancel := context.WithTimeout(context.Background(), p.requestTimeout)
 	defer cancel()
 
+	conn, err := p.getConn()
+	if err != nil {
+		return err
+	}
+
 	if p.suUsername == p.replUsername {
 		log.Infow("adding replication role to superuser")
 		if p.suAuthMethod == "trust" {
-			if err := alterPasswordlessRole(ctx, p.localConnParams, []string{"replication"}, p.suUsername); err != nil {
+			if err := alterPasswordlessRole(ctx, conn, p.suUsername); err != nil {
 				return fmt.Errorf("error adding replication role to superuser: %v", err)
 			}
 		} else {
-			if err := alterRole(ctx, p.localConnParams, []string{"replication"}, p.suUsername, p.suPassword); err != nil {
+			if err := alterRole(ctx, conn, p.suUsername, p.suPassword); err != nil {
 				return fmt.Errorf("error adding replication role to superuser: %v", err)
 			}
 		}
@@ -569,7 +603,7 @@ func (p *Manager) SetupRoles() error {
 		// Configure superuser role password if auth method is not trust
 		if p.suAuthMethod != "trust" && p.suPassword != "" {
 			log.Infow("setting superuser password")
-			if err := setPassword(ctx, p.localConnParams, p.suUsername, p.suPassword); err != nil {
+			if err := setPassword(ctx, conn, p.suUsername, p.suPassword); err != nil {
 				return fmt.Errorf("error setting superuser password: %v", err)
 			}
 			log.Infow("superuser password set")
@@ -577,11 +611,11 @@ func (p *Manager) SetupRoles() error {
 		roles := []string{"login", "replication"}
 		log.Infow("creating replication role")
 		if p.replAuthMethod != "trust" {
-			if err := createRole(ctx, p.localConnParams, roles, p.replUsername, p.replPassword); err != nil {
+			if err := createRole(ctx, conn, roles, p.replUsername, p.replPassword); err != nil {
 				return fmt.Errorf("error creating replication role: %v", err)
 			}
 		} else {
-			if err := createPasswordlessRole(ctx, p.localConnParams, roles, p.replUsername); err != nil {
+			if err := createPasswordlessRole(ctx, conn, roles, p.replUsername); err != nil {
 				return fmt.Errorf("error creating replication role: %v", err)
 			}
 		}
@@ -593,7 +627,13 @@ func (p *Manager) SetupRoles() error {
 func (p *Manager) GetSyncStandbys() ([]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), p.requestTimeout)
 	defer cancel()
-	return getSyncStandbys(ctx, p.localConnParams)
+
+	conn, err := p.getConn()
+	if err != nil {
+		return nil, err
+	}
+
+	return getSyncStandbys(ctx, conn)
 }
 
 func (p *Manager) GetReplicationSlots() ([]string, error) {
@@ -604,19 +644,37 @@ func (p *Manager) GetReplicationSlots() ([]string, error) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), p.requestTimeout)
 	defer cancel()
-	return getReplicationSlots(ctx, p.localConnParams, maj)
+
+	conn, err := p.getConn()
+	if err != nil {
+		return nil, err
+	}
+
+	return getReplicationSlots(ctx, conn, maj)
 }
 
 func (p *Manager) CreateReplicationSlot(name string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), p.requestTimeout)
 	defer cancel()
-	return createReplicationSlot(ctx, p.localConnParams, name)
+
+	conn, err := p.getConn()
+	if err != nil {
+		return err
+	}
+
+	return createReplicationSlot(ctx, conn, name)
 }
 
 func (p *Manager) DropReplicationSlot(name string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), p.requestTimeout)
 	defer cancel()
-	return dropReplicationSlot(ctx, p.localConnParams, name)
+
+	conn, err := p.getConn()
+	if err != nil {
+		return err
+	}
+
+	return dropReplicationSlot(ctx, conn, name)
 }
 
 func (p *Manager) BinaryVersion() (int, int, error) {
@@ -1034,13 +1092,25 @@ func (p *Manager) GetTimelinesHistory(timeline uint64) ([]*TimelineHistory, erro
 func (p *Manager) GetConfigFilePGParameters() (common.Parameters, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), p.requestTimeout)
 	defer cancel()
-	return getConfigFilePGParameters(ctx, p.localConnParams)
+
+	conn, err := p.getConn()
+	if err != nil {
+		return nil, err
+	}
+
+	return getConfigFilePGParameters(ctx, conn)
 }
 
 func (p *Manager) Ping() error {
 	ctx, cancel := context.WithTimeout(context.Background(), p.requestTimeout)
 	defer cancel()
-	return ping(ctx, p.localConnParams)
+
+	conn, err := p.getConn()
+	if err != nil {
+		return err
+	}
+
+	return conn.PingContext(ctx)
 }
 
 func (p *Manager) OlderWalFile() (string, error) {
@@ -1094,9 +1164,14 @@ func (p *Manager) IsRestartRequired(changedParams []string) (bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), p.requestTimeout)
 	defer cancel()
 
+	conn, err := p.getConn()
+	if err != nil {
+		return false, err
+	}
+
 	if maj == 9 && min < 5 {
-		return isRestartRequiredUsingPgSettingsContext(ctx, p.localConnParams, changedParams)
+		return isRestartRequiredUsingPgSettingsContext(ctx, conn, changedParams)
 	} else {
-		return isRestartRequiredUsingPendingRestart(ctx, p.localConnParams)
+		return isRestartRequiredUsingPendingRestart(ctx, conn)
 	}
 }

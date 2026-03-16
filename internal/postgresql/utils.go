@@ -61,13 +61,7 @@ func ping(ctx context.Context, connParams ConnParams) error {
 	return nil
 }
 
-func setPassword(ctx context.Context, connParams ConnParams, username, password string) error {
-	db, err := sql.Open("postgres", connParams.ConnString())
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-
+func setPassword(ctx context.Context, db *sql.DB, username, password string) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return err
@@ -87,13 +81,7 @@ func setPassword(ctx context.Context, connParams ConnParams, username, password 
 	return tx.Commit()
 }
 
-func createRole(ctx context.Context, connParams ConnParams, roles []string, username, password string) error {
-	db, err := sql.Open("postgres", connParams.ConnString())
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-
+func createRole(ctx context.Context, db *sql.DB, roles []string, username, password string) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return err
@@ -113,24 +101,12 @@ func createRole(ctx context.Context, connParams ConnParams, roles []string, user
 	return tx.Commit()
 }
 
-func createPasswordlessRole(ctx context.Context, connParams ConnParams, roles []string, username string) error {
-	db, err := sql.Open("postgres", connParams.ConnString())
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-
-	_, err = dbExec(ctx, db, fmt.Sprintf(`create role "%s" with login replication;`, username))
+func createPasswordlessRole(ctx context.Context, db *sql.DB, roles []string, username string) error {
+	_, err := dbExec(ctx, db, fmt.Sprintf(`create role "%s" with login replication;`, username))
 	return err
 }
 
-func alterRole(ctx context.Context, connParams ConnParams, roles []string, username, password string) error {
-	db, err := sql.Open("postgres", connParams.ConnString())
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-
+func alterRole(ctx context.Context, db *sql.DB, username, password string) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return err
@@ -150,32 +126,20 @@ func alterRole(ctx context.Context, connParams ConnParams, roles []string, usern
 	return tx.Commit()
 }
 
-func alterPasswordlessRole(ctx context.Context, connParams ConnParams, roles []string, username string) error {
-	db, err := sql.Open("postgres", connParams.ConnString())
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-
-	_, err = dbExec(ctx, db, fmt.Sprintf(`alter role "%s" with login replication;`, username))
+func alterPasswordlessRole(ctx context.Context, db *sql.DB, username string) error {
+	_, err := dbExec(ctx, db, fmt.Sprintf(`alter role "%s" with login replication;`, username))
 	return err
 }
 
-// getReplicatinSlots return existing replication slots. On PostgreSQL > 10 we
+// getReplicationSlots return existing replication slots. On PostgreSQL > 10 we
 // skip temporary slots.
-func getReplicationSlots(ctx context.Context, connParams ConnParams, maj int) ([]string, error) {
+func getReplicationSlots(ctx context.Context, db *sql.DB, maj int) ([]string, error) {
 	var q string
 	if maj < 10 {
 		q = "select slot_name from pg_replication_slots"
 	} else {
 		q = "select slot_name from pg_replication_slots where temporary is false"
 	}
-
-	db, err := sql.Open("postgres", connParams.ConnString())
-	if err != nil {
-		return nil, err
-	}
-	defer db.Close()
 
 	replSlots := []string{}
 
@@ -195,35 +159,17 @@ func getReplicationSlots(ctx context.Context, connParams ConnParams, maj int) ([
 	return replSlots, nil
 }
 
-func createReplicationSlot(ctx context.Context, connParams ConnParams, name string) error {
-	db, err := sql.Open("postgres", connParams.ConnString())
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-
-	_, err = dbExec(ctx, db, fmt.Sprintf("select pg_create_physical_replication_slot('%s')", name))
+func createReplicationSlot(ctx context.Context, db *sql.DB, name string) error {
+	_, err := dbExec(ctx, db, fmt.Sprintf("select pg_create_physical_replication_slot('%s')", name))
 	return err
 }
 
-func dropReplicationSlot(ctx context.Context, connParams ConnParams, name string) error {
-	db, err := sql.Open("postgres", connParams.ConnString())
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-
-	_, err = dbExec(ctx, db, fmt.Sprintf("select pg_drop_replication_slot('%s')", name))
+func dropReplicationSlot(ctx context.Context, db *sql.DB, name string) error {
+	_, err := dbExec(ctx, db, fmt.Sprintf("select pg_drop_replication_slot('%s')", name))
 	return err
 }
 
-func getSyncStandbys(ctx context.Context, connParams ConnParams) ([]string, error) {
-	db, err := sql.Open("postgres", connParams.ConnString())
-	if err != nil {
-		return nil, err
-	}
-	defer db.Close()
-
+func getSyncStandbys(ctx context.Context, db *sql.DB) ([]string, error) {
 	rows, err := query(ctx, db, "select application_name, sync_state from pg_stat_replication")
 	if err != nil {
 		return nil, err
@@ -385,14 +331,8 @@ func expand(s, dataDir string) string {
 	return string(buf) + s[i:]
 }
 
-func getConfigFilePGParameters(ctx context.Context, connParams ConnParams) (common.Parameters, error) {
+func getConfigFilePGParameters(ctx context.Context, db *sql.DB) (common.Parameters, error) {
 	var pgParameters = common.Parameters{}
-	db, err := sql.Open("postgres", connParams.ConnString())
-	if err != nil {
-		return nil, err
-	}
-	defer db.Close()
-
 	// We prefer pg_file_settings since pg_settings returns archive_command = '(disabled)' when archive_mode is off so we'll lose its value
 	// Check if pg_file_settings exists (pg >= 9.5)
 	rows, err := query(ctx, db, "select 1 from information_schema.tables where table_schema = 'pg_catalog' and table_name = 'pg_file_settings'")
@@ -447,14 +387,8 @@ func getConfigFilePGParameters(ctx context.Context, connParams ConnParams) (comm
 	return pgParameters, nil
 }
 
-func isRestartRequiredUsingPendingRestart(ctx context.Context, connParams ConnParams) (bool, error) {
+func isRestartRequiredUsingPendingRestart(ctx context.Context, db *sql.DB) (bool, error) {
 	isRestartRequired := false
-	db, err := sql.Open("postgres", connParams.ConnString())
-	if err != nil {
-		return isRestartRequired, err
-	}
-	defer db.Close()
-
 	rows, err := query(ctx, db, "select count(*) > 0 from pg_settings where pending_restart;")
 	if err != nil {
 		return isRestartRequired, err
@@ -469,13 +403,8 @@ func isRestartRequiredUsingPendingRestart(ctx context.Context, connParams ConnPa
 	return isRestartRequired, nil
 }
 
-func isRestartRequiredUsingPgSettingsContext(ctx context.Context, connParams ConnParams, changedParams []string) (bool, error) {
+func isRestartRequiredUsingPgSettingsContext(ctx context.Context, db *sql.DB, changedParams []string) (bool, error) {
 	isRestartRequired := false
-	db, err := sql.Open("postgres", connParams.ConnString())
-	if err != nil {
-		return isRestartRequired, err
-	}
-	defer db.Close()
 
 	stmt, err := db.Prepare("select count(*) > 0 from pg_settings where context = 'postmaster' and name = ANY($1)")
 
