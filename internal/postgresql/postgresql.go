@@ -299,7 +299,7 @@ func (p *Manager) keepAlive() {
 	ticker := time.NewTicker(p.requestTimeout * 5)
 	for _ = range ticker.C {
 		if err := p.suConn.PingContext(context.Background()); err != nil {
-			log.Errorf("Keep alive failed: %f", err)
+			log.Errorf("Keep alive failed: %w", err)
 		}
 	}
 }

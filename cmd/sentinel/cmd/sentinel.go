@@ -155,8 +155,11 @@ func (s *Sentinel) SetDBError(uid string) {
 	}
 }
 
-func (s *Sentinel) CleanDBError(uid string) {
+// CleanDBError returns true if an error was indeed cleared.
+func (s *Sentinel) CleanDBError(uid string) bool {
+	_, ok := s.dbErrorTimers[uid]
 	delete(s.dbErrorTimers, uid)
+	return ok
 }
 
 func (s *Sentinel) SetDBNotIncreasingXLogPos(uid string) {
@@ -300,7 +303,10 @@ func (s *Sentinel) updateKeepersStatus(cd *cluster.ClusterData, keepersInfo clus
 		db.Status.Port = dbs.Port
 		db.Status.CurrentGeneration = dbs.Generation
 		if dbs.Healthy {
-			s.CleanDBError(db.UID)
+			if errCleared := s.CleanDBError(db.UID); errCleared {
+				log.Debugw("db recovered", "db", db.UID, db.Spec.KeeperUID)
+			}
+
 			db.Status.SystemID = dbs.SystemID
 			db.Status.TimelineID = dbs.TimelineID
 			db.Status.XLogPos = dbs.XLogPos
@@ -1721,6 +1727,20 @@ func (p ProxyInfoHistories) DeepCopy() ProxyInfoHistories {
 		panic("not equal")
 	}
 	return np.(ProxyInfoHistories)
+}
+
+type dbErrorStatus int
+
+const (
+	noKeeperInfo = iota
+	noDBState
+	unexpectedDBUID
+	otherError
+)
+
+type dbError struct {
+	errorCode dbErrorStatus
+	timestamp int64
 }
 
 type Sentinel struct {
