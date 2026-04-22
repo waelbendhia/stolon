@@ -29,6 +29,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -83,6 +84,8 @@ type Manager struct {
 	replUsername       string
 	replPassword       string
 	requestTimeout     time.Duration
+
+	stopping atomic.Bool
 }
 
 type RecoveryMode int
@@ -298,7 +301,8 @@ func (p *Manager) Start() error {
 func (p *Manager) keepAlive() {
 	ticker := time.NewTicker(p.requestTimeout * 5)
 	for _ = range ticker.C {
-		if err := p.suConn.PingContext(context.Background()); err != nil {
+		err := p.suConn.PingContext(context.Background())
+		if err != nil && !p.stopping.Load() {
 			log.Errorf("Keep alive failed: %w", err)
 		}
 	}
@@ -346,6 +350,7 @@ func (p *Manager) start(args ...string) error {
 	}
 
 	log.Infow("starting database")
+	p.stopping.Store(false)
 	name := filepath.Join(p.pgBinPath, "postgres")
 	args = append([]string{"-D", p.dataDir, "-c", "unix_socket_directories=" + common.PgUnixSocketDirectories}, args...)
 	cmd := exec.Command(name, args...)
@@ -421,6 +426,7 @@ func (p *Manager) Stop(fast bool) error {
 	// Pipe command's std[err|out] to parent.
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	p.stopping.Store(true)
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("error: %v", err)
 	}
