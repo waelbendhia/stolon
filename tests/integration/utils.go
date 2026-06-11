@@ -1016,6 +1016,10 @@ func NewTestConsul(t *testing.T, dir string, a ...string) (*TestStore, error) {
 	if err != nil {
 		return nil, err
 	}
+	_, portGrpcTls, err := getFreePort(true, false)
+	if err != nil {
+		return nil, err
+	}
 
 	f, err := os.Create(filepath.Join(dir, fmt.Sprintf("consul%s.json", uid)))
 	if err != nil {
@@ -1029,9 +1033,10 @@ func NewTestConsul(t *testing.T, dir string, a ...string) (*TestStore, error) {
 			"http": %s,
 			"serf_lan": %s,
 			"serf_wan": %s,
-			"server": %s
+			"server": %s,
+			"grpc_tls": %s
 		}
-	}`, portHTTP, portSerfLan, portSerfWan, portServer)); err != nil {
+	}`, portHTTP, portSerfLan, portSerfWan, portServer, portGrpcTls)); err != nil {
 		return nil, err
 	}
 
