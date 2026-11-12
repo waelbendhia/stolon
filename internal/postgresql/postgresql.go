@@ -683,6 +683,19 @@ func (p *Manager) DropReplicationSlot(name string) error {
 	return dropReplicationSlot(ctx, conn, name)
 }
 
+func (p *Manager) Checkpoint() error {
+	ctx, cancel := context.WithTimeout(context.Background(), p.requestTimeout)
+	defer cancel()
+
+	conn, err := p.getConn()
+	if err != nil {
+		return err
+	}
+
+	_, err = conn.ExecContext(ctx, "CHECKPOINT")
+	return err
+}
+
 func (p *Manager) BinaryVersion() (int, int, error) {
 	name := filepath.Join(p.pgBinPath, "postgres")
 	cmd := exec.Command(name, "-V")
@@ -1027,7 +1040,15 @@ func (p *Manager) SyncFromFollowed(followedConnParams ConnParams, replSlot strin
 
 	log.Infow("running pg_basebackup")
 	name := filepath.Join(p.pgBinPath, "pg_basebackup")
-	args := []string{"-R", "-v", "-P", "-Xs", "-D", p.dataDir, "-d", followedConnString}
+	args := []string{
+		"-R",
+		"-v",
+		"--checkpoint=fast",
+		"-P",
+		"-Xs",
+		"-D", p.dataDir,
+		"-d", followedConnString,
+	}
 	if replSlot != "" {
 		args = append(args, "--slot", replSlot)
 	}

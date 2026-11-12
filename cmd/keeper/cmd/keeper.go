@@ -639,16 +639,22 @@ func (p *PostgresKeeper) updatePGState(pctx context.Context) {
 //
 // Since postgres 9.6 (https://www.postgresql.org/docs/9.6/static/runtime-config-replication.html)
 // `synchronous_standby_names` can be in one of two formats:
-//   num_sync ( standby_name [, ...] )
-//   standby_name [, ...]
+//
+//	num_sync ( standby_name [, ...] )
+//	standby_name [, ...]
+//
 // two examples for this:
-//   2 (node1,node2)
-//   node1,node2
+//
+//	2 (node1,node2)
+//	node1,node2
+//
 // TODO(sgotti) since postgres 10 (https://www.postgresql.org/docs/10/static/runtime-config-replication.html)
 // `synchronous_standby_names` can be in one of three formats:
-//   [FIRST] num_sync ( standby_name [, ...] )
-//   ANY num_sync ( standby_name [, ...] )
-//   standby_name [, ...]
+//
+//	[FIRST] num_sync ( standby_name [, ...] )
+//	ANY num_sync ( standby_name [, ...] )
+//	standby_name [, ...]
+//
 // since we are writing ourself the synchronous_standby_names we don't handle this case.
 // If needed, to better handle all the cases with also a better validation of
 // standby names we could use something like the parser used by postgres
@@ -1538,6 +1544,12 @@ func (p *PostgresKeeper) postgresKeeperSM(pctx context.Context) {
 			if err = pgm.Promote(); err != nil {
 				log.Errorw("failed to promote instance", zap.Error(err))
 				return
+			}
+
+			if err = pgm.Checkpoint(); err != nil {
+				// Don't think it's really necessary to exit out
+				// completely if checkpoint fails
+				log.Warnw("failed to checkpoint on new master", zap.Error(err))
 			}
 		} else {
 			log.Infow("already master")

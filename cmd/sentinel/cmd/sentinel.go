@@ -732,7 +732,7 @@ func (s *Sentinel) findBestStandbys(cd *cluster.ClusterData, masterDB *cluster.D
 		bestDBs = append(bestDBs, db)
 	}
 	// Sort by XLogPos
-	sort.Sort(dbSlice(bestDBs))
+	sort.Sort(sort.Reverse(dbSlice(bestDBs)))
 	return bestDBs
 }
 
@@ -779,7 +779,7 @@ func (s *Sentinel) findBestNewMasters(cd *cluster.ClusterData, masterDB *cluster
 	}
 
 	// Sort by XLogPos
-	sort.Sort(dbSlice(bestNewMasters))
+	sort.Sort(sort.Reverse(dbSlice(bestNewMasters)))
 	log.Debugf("bestNewMasters: %s", spew.Sdump(bestNewMasters))
 	return bestNewMasters
 }
